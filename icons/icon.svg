@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="64" fill="#0f1117"/>
+  <rect x="40" y="40" width="432" height="432" rx="32" fill="#1a1d27" stroke="#4a7cff" stroke-width="8"/>
+  <!-- 3x3 binder grid -->
+  <rect x="72" y="72" width="112" height="112" rx="8" fill="#222633" stroke="#3a3f52" stroke-width="2"/>
+  <rect x="200" y="72" width="112" height="112" rx="8" fill="#3dd68c" fill-opacity="0.15" stroke="#3dd68c" stroke-width="2"/>
+  <rect x="328" y="72" width="112" height="112" rx="8" fill="#222633" stroke="#3a3f52" stroke-width="2"/>
+  <rect x="72" y="200" width="112" height="112" rx="8" fill="#3dd68c" fill-opacity="0.15" stroke="#3dd68c" stroke-width="2"/>
+  <rect x="200" y="200" width="112" height="112" rx="8" fill="#3dd68c" fill-opacity="0.15" stroke="#3dd68c" stroke-width="2"/>
+  <rect x="328" y="200" width="112" height="112" rx="8" fill="#222633" stroke="#3a3f52" stroke-width="2"/>
+  <rect x="72" y="328" width="112" height="112" rx="8" fill="#222633" stroke="#3a3f52" stroke-width="2"/>
+  <rect x="200" y="328" width="112" height="112" rx="8" fill="#222633" stroke="#3a3f52" stroke-width="2"/>
+  <rect x="328" y="328" width="112" height="112" rx="8" fill="#3dd68c" fill-opacity="0.15" stroke="#3dd68c" stroke-width="2"/>
+  <!-- Checkmarks in "owned" slots -->
+  <path d="M232 128 l16 16 l24-24" fill="none" stroke="#3dd68c" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M104 256 l16 16 l24-24" fill="none" stroke="#3dd68c" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M232 256 l16 16 l24-24" fill="none" stroke="#3dd68c" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M360 384 l16 16 l24-24" fill="none" stroke="#3dd68c" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- SD text -->
+  <text x="256" y="490" text-anchor="middle" font-family="sans-serif" font-weight="700" font-size="36" fill="#4a7cff">SetDash</text>
+</svg>

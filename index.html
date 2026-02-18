@@ -152,7 +152,7 @@
                     <input type="text" id="new-set-brand" placeholder="e.g. Topps">
                 </div>
                 <div class="form-row">
-                    <label>Import from CSV (Beckett format)</label>
+                    <label>Import from CSV or Beckett Checklist</label>
                     <div class="csv-upload-area" id="csv-upload-area">
                         <input type="file" id="csv-file" accept=".csv,.txt" hidden>
                         <p>Drag & drop a CSV file here or <button class="btn-link" id="btn-browse-csv">browse</button></p>
@@ -160,8 +160,8 @@
                     </div>
                 </div>
                 <div class="form-row">
-                    <label>Or paste CSV data</label>
-                    <textarea id="csv-paste" rows="6" placeholder="Paste Beckett CSV data here...&#10;Card #, Player, Team, Subset/Insert..."></textarea>
+                    <label>Or paste checklist / CSV data</label>
+                    <textarea id="csv-paste" rows="6" placeholder="Paste a Beckett checklist or CSV data here...&#10;e.g. 1 Jayson Tatum Boston Celtics 2 Jaylen Brown Boston Celtics...&#10;or: Card #, Player, Team, Subset/Insert..."></textarea>
                 </div>
                 <div id="csv-preview" class="csv-preview hidden">
                     <h3>Preview (<span id="csv-count">0</span> cards)</h3>

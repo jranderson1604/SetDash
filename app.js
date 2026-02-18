@@ -26,8 +26,119 @@
 
     let appData = loadData();
 
+    // ===== KNOWN TEAMS (for Beckett checklist parsing) =====
+    const KNOWN_TEAMS = [
+        // NBA
+        'Atlanta Hawks', 'Boston Celtics', 'Brooklyn Nets', 'Charlotte Hornets',
+        'Chicago Bulls', 'Cleveland Cavaliers', 'Dallas Mavericks', 'Denver Nuggets',
+        'Detroit Pistons', 'Golden State Warriors', 'Houston Rockets', 'Indiana Pacers',
+        'LA Clippers', 'Los Angeles Clippers', 'Los Angeles Lakers', 'Memphis Grizzlies',
+        'Miami Heat', 'Milwaukee Bucks', 'Minnesota Timberwolves', 'New Orleans Pelicans',
+        'New York Knicks', 'Oklahoma City Thunder', 'Orlando Magic', 'Philadelphia 76ers',
+        'Phoenix Suns', 'Portland Trail Blazers', 'Sacramento Kings', 'San Antonio Spurs',
+        'Toronto Raptors', 'Utah Jazz', 'Washington Wizards',
+        // MLB
+        'Arizona Diamondbacks', 'Atlanta Braves', 'Baltimore Orioles', 'Boston Red Sox',
+        'Chicago Cubs', 'Chicago White Sox', 'Cincinnati Reds', 'Cleveland Guardians',
+        'Colorado Rockies', 'Detroit Tigers', 'Houston Astros', 'Kansas City Royals',
+        'Los Angeles Angels', 'Los Angeles Dodgers', 'Miami Marlins', 'Milwaukee Brewers',
+        'Minnesota Twins', 'New York Mets', 'New York Yankees', 'Oakland Athletics',
+        'Philadelphia Phillies', 'Pittsburgh Pirates', 'San Diego Padres',
+        'San Francisco Giants', 'Seattle Mariners', 'St. Louis Cardinals',
+        'Tampa Bay Rays', 'Texas Rangers', 'Toronto Blue Jays', 'Washington Nationals',
+        // NFL
+        'Arizona Cardinals', 'Atlanta Falcons', 'Baltimore Ravens', 'Buffalo Bills',
+        'Carolina Panthers', 'Chicago Bears', 'Cincinnati Bengals', 'Cleveland Browns',
+        'Dallas Cowboys', 'Denver Broncos', 'Detroit Lions', 'Green Bay Packers',
+        'Houston Texans', 'Indianapolis Colts', 'Jacksonville Jaguars', 'Kansas City Chiefs',
+        'Las Vegas Raiders', 'Los Angeles Chargers', 'Los Angeles Rams', 'Miami Dolphins',
+        'Minnesota Vikings', 'New England Patriots', 'New Orleans Saints', 'New York Giants',
+        'New York Jets', 'Philadelphia Eagles', 'Pittsburgh Steelers', 'San Francisco 49ers',
+        'Seattle Seahawks', 'Tampa Bay Buccaneers', 'Tennessee Titans', 'Washington Commanders',
+        // NHL
+        'Anaheim Ducks', 'Arizona Coyotes', 'Boston Bruins', 'Buffalo Sabres',
+        'Calgary Flames', 'Carolina Hurricanes', 'Colorado Avalanche', 'Columbus Blue Jackets',
+        'Dallas Stars', 'Edmonton Oilers', 'Florida Panthers', 'Hartford Whalers',
+        'Los Angeles Kings', 'Minnesota Wild', 'Montreal Canadiens', 'Nashville Predators',
+        'New Jersey Devils', 'New York Islanders', 'New York Rangers', 'Ottawa Senators',
+        'Philadelphia Flyers', 'Pittsburgh Penguins', 'San Jose Sharks', 'Seattle Kraken',
+        'St. Louis Blues', 'Tampa Bay Lightning', 'Toronto Maple Leafs', 'Utah Hockey Club',
+        'Vancouver Canucks', 'Vegas Golden Knights', 'Washington Capitals', 'Winnipeg Jets'
+    ];
+
+    // Build regex pattern from team names (sorted longest first to avoid partial matches)
+    const TEAM_PATTERN = KNOWN_TEAMS
+        .sort((a, b) => b.length - a.length)
+        .map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+        .join('|');
+
+    // ===== BECKETT CHECKLIST PARSING =====
+    function parseBeckettChecklist(text) {
+        // Strip BOM and normalize whitespace
+        text = text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+        // Build regex: card_number + player_name + team_name
+        const cardRegex = new RegExp(
+            '(?:^|\\n|(?<=(?:' + TEAM_PATTERN + ')\\s*))' +
+            '(\\d+)\\s+' +                    // card number
+            '(.+?)\\s+' +                      // player name (non-greedy)
+            '(' + TEAM_PATTERN + ')',           // team name
+            'gi'
+        );
+
+        const cards = [];
+        let match;
+        while ((match = cardRegex.exec(text)) !== null) {
+            const number = match[1].trim();
+            const player = match[2].trim();
+            const team = match[3].trim();
+
+            // Skip if player name looks like preamble junk
+            if (!player || /^\d+$/.test(player)) continue;
+
+            cards.push({
+                id: generateId(),
+                number,
+                player,
+                team,
+                subset: 'Base',
+                owned: false
+            });
+        }
+
+        return cards;
+    }
+
+    // Test whether text looks like a Beckett checklist (not CSV)
+    function looksLikeBeckettChecklist(text) {
+        // If it has commas/tabs separating fields with a header row, it's CSV
+        const firstLine = text.trim().split(/\r?\n/)[0] || '';
+        if (/,/.test(firstLine) && /\t/.test(firstLine) === false) {
+            const fields = parseCSVLine(firstLine);
+            if (fields.length >= 2) {
+                const lower = fields.map(f => f.trim().toLowerCase());
+                if (lower.some(f => /^(card|#|number|player|name|team)/.test(f))) {
+                    return false; // Looks like a proper CSV header
+                }
+            }
+        }
+
+        // Check if text contains patterns like "1 Player Name Team Name"
+        const teamTest = new RegExp('\\d+\\s+\\S+.*?\\s+(' + TEAM_PATTERN + ')', 'i');
+        return teamTest.test(text);
+    }
+
     // ===== CSV PARSING =====
     function parseCSV(text) {
+        // Strip BOM
+        text = text.replace(/^\uFEFF/, '');
+
+        // Auto-detect: try Beckett checklist format first if it looks like one
+        if (looksLikeBeckettChecklist(text)) {
+            const beckettCards = parseBeckettChecklist(text);
+            if (beckettCards.length > 0) return beckettCards;
+        }
+
         const lines = text.trim().split(/\r?\n/);
         if (lines.length < 2) return [];
 
@@ -60,6 +171,12 @@
             if (!card.number && !card.player) continue;
 
             cards.push(card);
+        }
+
+        // If CSV parsing produced bad results, try Beckett as fallback
+        if (cards.length === 0) {
+            const beckettCards = parseBeckettChecklist(text);
+            if (beckettCards.length > 0) return beckettCards;
         }
 
         return cards;

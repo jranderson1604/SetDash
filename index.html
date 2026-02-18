@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SetDash - Sports Card Set Tracker</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <header>
+        <div class="header-left">
+            <h1>SetDash</h1>
+            <span class="tagline">Binder Organizer</span>
+        </div>
+        <div class="header-right">
+            <button id="btn-new-set" class="btn btn-primary">+ New Set</button>
+        </div>
+    </header>
+
+    <nav class="tabs">
+        <button class="tab active" data-tab="my-sets">My Sets</button>
+        <button class="tab" data-tab="binder-view">Binder View</button>
+    </nav>
+
+    <!-- MY SETS TAB -->
+    <main id="tab-my-sets" class="tab-content active">
+        <div class="sets-toolbar">
+            <div class="filter-group">
+                <label>Sport:</label>
+                <select id="filter-sport">
+                    <option value="all">All Sports</option>
+                    <option value="basketball">Basketball</option>
+                    <option value="baseball">Baseball</option>
+                    <option value="football">Football</option>
+                    <option value="hockey">Hockey</option>
+                    <option value="soccer">Soccer</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>Year:</label>
+                <select id="filter-year">
+                    <option value="all">All Years</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>Brand:</label>
+                <select id="filter-brand">
+                    <option value="all">All Brands</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>Sort:</label>
+                <select id="sort-sets">
+                    <option value="name-asc">Name A-Z</option>
+                    <option value="name-desc">Name Z-A</option>
+                    <option value="year-desc">Year (Newest)</option>
+                    <option value="year-asc">Year (Oldest)</option>
+                    <option value="progress-desc">Progress (Most)</option>
+                    <option value="progress-asc">Progress (Least)</option>
+                    <option value="sport">Sport</option>
+                </select>
+            </div>
+            <div class="search-group">
+                <input type="text" id="search-sets" placeholder="Search sets...">
+            </div>
+        </div>
+
+        <div id="sets-grid" class="sets-grid">
+            <!-- Set cards rendered here -->
+        </div>
+    </main>
+
+    <!-- BINDER VIEW TAB -->
+    <main id="tab-binder-view" class="tab-content">
+        <div class="binder-toolbar">
+            <div class="filter-group">
+                <label>Set:</label>
+                <select id="binder-set-select">
+                    <option value="">-- Select a Set --</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>Subset:</label>
+                <select id="binder-subset-select">
+                    <option value="all">All (Base + Inserts)</option>
+                    <option value="base">Base Only</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>Organize by:</label>
+                <select id="binder-sort">
+                    <option value="number">Card #</option>
+                    <option value="last-name">Last Name</option>
+                    <option value="team">Team</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>Show:</label>
+                <select id="binder-show">
+                    <option value="all">All Cards</option>
+                    <option value="owned">Owned Only</option>
+                    <option value="needed">Needed Only</option>
+                </select>
+            </div>
+            <div class="binder-stats" id="binder-stats"></div>
+        </div>
+
+        <div id="binder-pages" class="binder-pages">
+            <!-- 9x9 binder pages rendered here -->
+        </div>
+    </main>
+
+    <!-- NEW SET MODAL -->
+    <div id="modal-new-set" class="modal hidden">
+        <div class="modal-overlay"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Create New Set</h2>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-row">
+                    <label>Set Name</label>
+                    <input type="text" id="new-set-name" placeholder="e.g. 2025-26 Topps Flagship Basketball">
+                </div>
+                <div class="form-row two-col">
+                    <div>
+                        <label>Sport</label>
+                        <select id="new-set-sport">
+                            <option value="basketball">Basketball</option>
+                            <option value="baseball">Baseball</option>
+                            <option value="football">Football</option>
+                            <option value="hockey">Hockey</option>
+                            <option value="soccer">Soccer</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label>Year</label>
+                        <input type="text" id="new-set-year" placeholder="e.g. 2025-26">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <label>Brand</label>
+                    <input type="text" id="new-set-brand" placeholder="e.g. Topps">
+                </div>
+                <div class="form-row">
+                    <label>Import from CSV (Beckett format)</label>
+                    <div class="csv-upload-area" id="csv-upload-area">
+                        <input type="file" id="csv-file" accept=".csv,.txt" hidden>
+                        <p>Drag & drop a CSV file here or <button class="btn-link" id="btn-browse-csv">browse</button></p>
+                        <span class="csv-filename" id="csv-filename"></span>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <label>Or paste CSV data</label>
+                    <textarea id="csv-paste" rows="6" placeholder="Paste Beckett CSV data here...&#10;Card #, Player, Team, Subset/Insert..."></textarea>
+                </div>
+                <div id="csv-preview" class="csv-preview hidden">
+                    <h3>Preview (<span id="csv-count">0</span> cards)</h3>
+                    <div class="csv-preview-table-wrap">
+                        <table id="csv-preview-table">
+                            <thead></thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="btn-cancel-set">Cancel</button>
+                <button class="btn btn-primary" id="btn-create-set">Create Set</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- SET DETAIL MODAL -->
+    <div id="modal-set-detail" class="modal hidden">
+        <div class="modal-overlay"></div>
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h2 id="detail-set-name"></h2>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="detail-toolbar">
+                    <div class="detail-stats" id="detail-stats"></div>
+                    <div class="detail-actions">
+                        <div class="filter-group">
+                            <label>Subset:</label>
+                            <select id="detail-subset-filter">
+                                <option value="all">All</option>
+                                <option value="base">Base Only</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label>Show:</label>
+                            <select id="detail-show-filter">
+                                <option value="all">All</option>
+                                <option value="owned">Owned</option>
+                                <option value="needed">Needed</option>
+                            </select>
+                        </div>
+                        <input type="text" id="detail-search" placeholder="Search cards...">
+                        <button class="btn btn-small btn-secondary" id="btn-add-cards">+ Add Cards</button>
+                        <button class="btn btn-small btn-secondary" id="btn-import-more">Import CSV</button>
+                        <button class="btn btn-small btn-danger" id="btn-delete-set">Delete Set</button>
+                    </div>
+                </div>
+                <div class="detail-progress-bar">
+                    <div class="progress-fill" id="detail-progress-fill"></div>
+                </div>
+                <table class="card-table" id="detail-card-table">
+                    <thead>
+                        <tr>
+                            <th class="col-check"><input type="checkbox" id="detail-select-all"></th>
+                            <th class="col-num sortable" data-sort="number">Card #</th>
+                            <th class="col-player sortable" data-sort="player">Player</th>
+                            <th class="col-team sortable" data-sort="team">Team</th>
+                            <th class="col-subset sortable" data-sort="subset">Subset</th>
+                            <th class="col-owned">Owned</th>
+                        </tr>
+                    </thead>
+                    <tbody id="detail-card-tbody"></tbody>
+                </table>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="btn-binder-view-set">View in Binder</button>
+                <button class="btn btn-primary" id="btn-close-detail">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ADD CARDS MODAL -->
+    <div id="modal-add-cards" class="modal hidden">
+        <div class="modal-overlay"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Add Cards Manually</h2>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="add-cards-rows">
+                    <div class="add-card-row">
+                        <input type="text" placeholder="Card #" class="add-num">
+                        <input type="text" placeholder="Player Name" class="add-player">
+                        <input type="text" placeholder="Team" class="add-team">
+                        <input type="text" placeholder="Subset (optional)" class="add-subset">
+                        <button class="btn-icon btn-remove-row" title="Remove">&times;</button>
+                    </div>
+                </div>
+                <button class="btn btn-small btn-secondary" id="btn-add-another-row">+ Add Row</button>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary modal-close">Cancel</button>
+                <button class="btn btn-primary" id="btn-save-cards">Save Cards</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

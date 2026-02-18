@@ -232,6 +232,28 @@
         return fields[index].trim();
     }
 
+    // ===== EXCEL (.xlsx) PARSING =====
+    function parseExcel(arrayBuffer) {
+        if (typeof XLSX === 'undefined') {
+            alert('Excel support is loading. Please try again in a moment.');
+            return [];
+        }
+
+        const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+        const sheetName = workbook.SheetNames[0];
+        const sheet = workbook.Sheets[sheetName];
+
+        // Convert to CSV text, then use existing parseCSV
+        const csvText = XLSX.utils.sheet_to_csv(sheet);
+        return parseCSV(csvText);
+    }
+
+    function isExcelFile(file) {
+        if (!file) return false;
+        const name = file.name.toLowerCase();
+        return name.endsWith('.xlsx') || name.endsWith('.xls');
+    }
+
     // ===== SORTING HELPERS =====
     function naturalSort(a, b) {
         // Sort card numbers naturally: 1, 2, 10, 100, A1, B2, etc.
@@ -676,6 +698,51 @@
         showModal('modal-new-set');
     }
 
+    function handleFileUpload(file) {
+        if (isExcelFile(file)) {
+            const reader = new FileReader();
+            reader.onload = () => {
+                const cards = parseExcel(reader.result);
+                document.getElementById('csv-filename').textContent = file.name;
+                pendingCSVCards = cards;
+                showImportPreview(cards, file.name);
+            };
+            reader.readAsArrayBuffer(file);
+        } else {
+            const reader = new FileReader();
+            reader.onload = () => handleCSVInput(reader.result, file.name);
+            reader.readAsText(file);
+        }
+    }
+
+    function showImportPreview(cards, filename) {
+        if (cards.length === 0) {
+            document.getElementById('csv-preview').classList.add('hidden');
+            return;
+        }
+
+        document.getElementById('csv-count').textContent = cards.length;
+        document.getElementById('csv-preview').classList.remove('hidden');
+
+        const thead = document.querySelector('#csv-preview-table thead');
+        const tbody = document.querySelector('#csv-preview-table tbody');
+        thead.innerHTML = '<tr><th>#</th><th>Player</th><th>Team</th><th>Subset</th></tr>';
+        tbody.innerHTML = cards.slice(0, 50).map(c => `
+            <tr>
+                <td>${escHtml(c.number)}</td>
+                <td>${escHtml(c.player)}</td>
+                <td>${escHtml(c.team)}</td>
+                <td>${escHtml(c.subset)}</td>
+            </tr>
+        `).join('') + (cards.length > 50 ? `<tr><td colspan="4" style="color:var(--text-muted)">... and ${cards.length - 50} more</td></tr>` : '');
+
+        // Auto-detect year from filename
+        if (!document.getElementById('new-set-year').value && filename) {
+            const yearMatch = filename.match(/(20\d{2}(-\d{2})?)/);
+            if (yearMatch) document.getElementById('new-set-year').value = yearMatch[1];
+        }
+    }
+
     function handleCSVInput(text, filename) {
         if (filename) {
             document.getElementById('csv-filename').textContent = filename;
@@ -815,43 +882,57 @@
         renderSetsGrid();
     }
 
-    // ===== IMPORT MORE CSV TO EXISTING SET =====
+    // ===== IMPORT MORE TO EXISTING SET =====
     function importMoreCSV() {
         const input = document.createElement('input');
         input.type = 'file';
-        input.accept = '.csv,.txt';
+        input.accept = '.csv,.txt,.xlsx,.xls';
         input.addEventListener('change', () => {
             const file = input.files[0];
             if (!file) return;
-            const reader = new FileReader();
-            reader.onload = () => {
-                const cards = parseCSV(reader.result);
-                if (cards.length === 0) {
-                    alert('No cards found in CSV file.');
-                    return;
-                }
-                const set = appData.sets.find(s => s.id === currentDetailSetId);
-                if (!set) return;
 
-                // Merge: skip duplicates by card number
-                const existingNums = new Set(set.cards.map(c => c.number));
-                let added = 0;
-                cards.forEach(c => {
-                    if (!existingNums.has(c.number)) {
-                        set.cards.push(c);
-                        existingNums.add(c.number);
-                        added++;
-                    }
-                });
-
-                saveData(appData);
-                renderDetailTable();
-                renderSetsGrid();
-                alert(`Imported ${added} new cards (${cards.length - added} duplicates skipped).`);
-            };
-            reader.readAsText(file);
+            if (isExcelFile(file)) {
+                const reader = new FileReader();
+                reader.onload = () => {
+                    const cards = parseExcel(reader.result);
+                    mergeImportedCards(cards);
+                };
+                reader.readAsArrayBuffer(file);
+            } else {
+                const reader = new FileReader();
+                reader.onload = () => {
+                    const cards = parseCSV(reader.result);
+                    mergeImportedCards(cards);
+                };
+                reader.readAsText(file);
+            }
         });
         input.click();
+    }
+
+    function mergeImportedCards(cards) {
+        if (cards.length === 0) {
+            alert('No cards found in file.');
+            return;
+        }
+        const set = appData.sets.find(s => s.id === currentDetailSetId);
+        if (!set) return;
+
+        // Merge: skip duplicates by card number
+        const existingNums = new Set(set.cards.map(c => c.number));
+        let added = 0;
+        cards.forEach(c => {
+            if (!existingNums.has(c.number)) {
+                set.cards.push(c);
+                existingNums.add(c.number);
+                added++;
+            }
+        });
+
+        saveData(appData);
+        renderDetailTable();
+        renderSetsGrid();
+        alert(`Imported ${added} new cards (${cards.length - added} duplicates skipped).`);
     }
 
     // ===== UTILITY =====
@@ -1243,12 +1324,10 @@
         document.getElementById('csv-file').addEventListener('change', (e) => {
             const file = e.target.files[0];
             if (!file) return;
-            const reader = new FileReader();
-            reader.onload = () => handleCSVInput(reader.result, file.name);
-            reader.readAsText(file);
+            handleFileUpload(file);
         });
 
-        // CSV drag & drop
+        // File drag & drop
         const dropArea = document.getElementById('csv-upload-area');
         dropArea.addEventListener('dragover', (e) => {
             e.preventDefault();
@@ -1259,11 +1338,7 @@
             e.preventDefault();
             dropArea.classList.remove('dragover');
             const file = e.dataTransfer.files[0];
-            if (file) {
-                const reader = new FileReader();
-                reader.onload = () => handleCSVInput(reader.result, file.name);
-                reader.readAsText(file);
-            }
+            if (file) handleFileUpload(file);
         });
 
         // CSV paste

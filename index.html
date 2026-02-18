@@ -152,10 +152,10 @@
                     <input type="text" id="new-set-brand" placeholder="e.g. Topps">
                 </div>
                 <div class="form-row">
-                    <label>Import from CSV or Beckett Checklist</label>
+                    <label>Import from Excel, CSV, or Beckett Checklist</label>
                     <div class="csv-upload-area" id="csv-upload-area">
-                        <input type="file" id="csv-file" accept=".csv,.txt" hidden>
-                        <p>Drag & drop a CSV file here or <button class="btn-link" id="btn-browse-csv">browse</button></p>
+                        <input type="file" id="csv-file" accept=".csv,.txt,.xlsx,.xls" hidden>
+                        <p>Drag & drop a file here or <button class="btn-link" id="btn-browse-csv">browse</button></p>
                         <span class="csv-filename" id="csv-filename"></span>
                     </div>
                 </div>
@@ -264,6 +264,7 @@
         </div>
     </div>
 
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
     <script src="app.js"></script>
     <script>
         // Service Worker registration

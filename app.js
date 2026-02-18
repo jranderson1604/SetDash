@@ -28,7 +28,7 @@
 
     // ===== KNOWN TEAMS (for Beckett checklist parsing) =====
     const KNOWN_TEAMS = [
-        // NBA
+        // NBA (current)
         'Atlanta Hawks', 'Boston Celtics', 'Brooklyn Nets', 'Charlotte Hornets',
         'Chicago Bulls', 'Cleveland Cavaliers', 'Dallas Mavericks', 'Denver Nuggets',
         'Detroit Pistons', 'Golden State Warriors', 'Houston Rockets', 'Indiana Pacers',
@@ -37,6 +37,12 @@
         'New York Knicks', 'Oklahoma City Thunder', 'Orlando Magic', 'Philadelphia 76ers',
         'Phoenix Suns', 'Portland Trail Blazers', 'Sacramento Kings', 'San Antonio Spurs',
         'Toronto Raptors', 'Utah Jazz', 'Washington Wizards',
+        // NBA (historical/retired)
+        'Seattle SuperSonics', 'Seattle Supersonics', 'Vancouver Grizzlies',
+        'New Jersey Nets', 'Charlotte Bobcats', 'Washington Bullets',
+        'San Diego Clippers', 'Kansas City Kings', 'St. Louis Hawks',
+        'Cincinnati Royals', 'Baltimore Bullets', 'New Orleans Hornets',
+        'New Orleans/Oklahoma City Hornets',
         // MLB
         'Arizona Diamondbacks', 'Atlanta Braves', 'Baltimore Orioles', 'Boston Red Sox',
         'Chicago Cubs', 'Chicago White Sox', 'Cincinnati Reds', 'Cleveland Guardians',
@@ -46,6 +52,7 @@
         'Philadelphia Phillies', 'Pittsburgh Pirates', 'San Diego Padres',
         'San Francisco Giants', 'Seattle Mariners', 'St. Louis Cardinals',
         'Tampa Bay Rays', 'Texas Rangers', 'Toronto Blue Jays', 'Washington Nationals',
+        'Cleveland Indians', 'Montreal Expos', 'Florida Marlins',
         // NFL
         'Arizona Cardinals', 'Atlanta Falcons', 'Baltimore Ravens', 'Buffalo Bills',
         'Carolina Panthers', 'Chicago Bears', 'Cincinnati Bengals', 'Cleveland Browns',
@@ -55,6 +62,8 @@
         'Minnesota Vikings', 'New England Patriots', 'New Orleans Saints', 'New York Giants',
         'New York Jets', 'Philadelphia Eagles', 'Pittsburgh Steelers', 'San Francisco 49ers',
         'Seattle Seahawks', 'Tampa Bay Buccaneers', 'Tennessee Titans', 'Washington Commanders',
+        'Oakland Raiders', 'San Diego Chargers', 'St. Louis Rams', 'Washington Redskins',
+        'Washington Football Team',
         // NHL
         'Anaheim Ducks', 'Arizona Coyotes', 'Boston Bruins', 'Buffalo Sabres',
         'Calgary Flames', 'Carolina Hurricanes', 'Colorado Avalanche', 'Columbus Blue Jackets',
@@ -74,34 +83,72 @@
 
     // ===== BECKETT CHECKLIST PARSING =====
     function parseBeckettChecklist(text) {
-        // Strip BOM and normalize whitespace
         text = text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 
-        // Build regex: card_number + player_name + team_name
-        const cardRegex = new RegExp(
-            '(?:^|\\n|(?<=(?:' + TEAM_PATTERN + ')\\s*))' +
+        // Try comma-delimited format first: "number player, team [RC]"
+        const commaRegex = new RegExp(
             '(\\d+)\\s+' +                    // card number
-            '(.+?)\\s+' +                      // player name (non-greedy)
-            '(' + TEAM_PATTERN + ')',           // team name
+            '([^,]+?),\\s*' +                  // player name (up to comma)
+            '(' + TEAM_PATTERN + ')' +          // team name
+            '(?:\\s+RC)?',                      // optional RC designation
             'gi'
         );
 
-        const cards = [];
+        let allMatches = [];
         let match;
-        while ((match = cardRegex.exec(text)) !== null) {
-            const number = match[1].trim();
-            const player = match[2].trim();
-            const team = match[3].trim();
+        while ((match = commaRegex.exec(text)) !== null) {
+            allMatches.push({
+                index: match.index,
+                endIndex: match.index + match[0].length,
+                number: match[1].trim(),
+                player: match[2].trim(),
+                team: match[3].trim()
+            });
+        }
 
-            // Skip if player name looks like preamble junk
-            if (!player || /^\d+$/.test(player)) continue;
+        // Fall back to space-only format: "number player team" (no commas)
+        if (allMatches.length === 0) {
+            const spaceRegex = new RegExp(
+                '(\\d+)\\s+' +
+                '(.+?)\\s+' +
+                '(' + TEAM_PATTERN + ')',
+                'gi'
+            );
+            while ((match = spaceRegex.exec(text)) !== null) {
+                allMatches.push({
+                    index: match.index,
+                    endIndex: match.index + match[0].length,
+                    number: match[1].trim(),
+                    player: match[2].trim(),
+                    team: match[3].trim()
+                });
+            }
+        }
+
+        if (allMatches.length === 0) return [];
+
+        // Build cards with subset detection from gap text between matches
+        let currentSubset = 'Base';
+        const cards = [];
+
+        for (let i = 0; i < allMatches.length; i++) {
+            const m = allMatches[i];
+
+            // Check text between this card and previous for subset headers
+            const prevEnd = i > 0 ? allMatches[i - 1].endIndex : 0;
+            const gapText = text.substring(prevEnd, m.index);
+            const newSubset = detectSubsetFromGap(gapText);
+            if (newSubset) currentSubset = newSubset;
+
+            // Skip junk matches (player name is just digits)
+            if (!m.player || /^\d+$/.test(m.player)) continue;
 
             cards.push({
                 id: generateId(),
-                number,
-                player,
-                team,
-                subset: 'Base',
+                number: m.number,
+                player: m.player,
+                team: m.team,
+                subset: currentSubset,
                 owned: false
             });
         }
@@ -109,23 +156,53 @@
         return cards;
     }
 
+    function detectSubsetFromGap(gapText) {
+        if (!gapText || gapText.trim().length === 0) return null;
+
+        let text = gapText.trim();
+
+        // Remove everything after first "*" (parallel/odds bullet points)
+        text = text.replace(/\*[\s\S]*$/, '');
+        // Remove card count patterns: "300 cards", "30 cards"
+        text = text.replace(/\d+\s+cards?\b/gi, '');
+        // Remove pack odds: "1:5002 packs (Hobby exclusive)"
+        text = text.replace(/\d+:\d[\d,]*\s*packs?[^)]*(\))?/gi, '');
+        // Remove "Parallels" and "Checklist"
+        text = text.replace(/\bParallels?\b/gi, '');
+        text = text.replace(/\bChecklist\b/gi, '');
+        // Remove parenthetical content
+        text = text.replace(/\([^)]*\)/g, '');
+        // Clean whitespace
+        text = text.replace(/\s+/g, ' ').trim();
+
+        if (!text || text.length < 2) return null;
+
+        // "Base Set" or "Base" → normalize to "Base"
+        if (/^base(\s+set)?$/i.test(text)) return 'Base';
+
+        return text;
+    }
+
     // Test whether text looks like a Beckett checklist (not CSV)
     function looksLikeBeckettChecklist(text) {
-        // If it has commas/tabs separating fields with a header row, it's CSV
+        // If it has commas separating fields with a proper CSV header row, it's CSV
         const firstLine = text.trim().split(/\r?\n/)[0] || '';
-        if (/,/.test(firstLine) && /\t/.test(firstLine) === false) {
+        if (/,/.test(firstLine)) {
             const fields = parseCSVLine(firstLine);
             if (fields.length >= 2) {
                 const lower = fields.map(f => f.trim().toLowerCase());
                 if (lower.some(f => /^(card|#|number|player|name|team)/.test(f))) {
-                    return false; // Looks like a proper CSV header
+                    return false; // Proper CSV header
                 }
             }
         }
 
-        // Check if text contains patterns like "1 Player Name Team Name"
-        const teamTest = new RegExp('\\d+\\s+\\S+.*?\\s+(' + TEAM_PATTERN + ')', 'i');
-        return teamTest.test(text);
+        // Check for Beckett patterns: "number player, team" or "number player team"
+        const commaTest = new RegExp('\\d+\\s+[^,]+,\\s*(' + TEAM_PATTERN + ')', 'i');
+        if (commaTest.test(text)) return true;
+
+        const spaceTest = new RegExp('\\d+\\s+\\S+.*?\\s+(' + TEAM_PATTERN + ')', 'i');
+        return spaceTest.test(text);
     }
 
     // ===== CSV PARSING =====
@@ -943,339 +1020,342 @@
 
     // ===== SEED DATA: 2025-26 Topps Flagship Basketball =====
     function seedTopps2025Basketball() {
-        // Check if already exists
         if (appData.sets.some(s => s.name === '2025-26 Topps Flagship Basketball')) return;
 
-        const teams = {
-            ATL: 'Atlanta Hawks', BOS: 'Boston Celtics', BKN: 'Brooklyn Nets',
-            CHA: 'Charlotte Hornets', CHI: 'Chicago Bulls', CLE: 'Cleveland Cavaliers',
-            DAL: 'Dallas Mavericks', DEN: 'Denver Nuggets', DET: 'Detroit Pistons',
-            GSW: 'Golden State Warriors', HOU: 'Houston Rockets', IND: 'Indiana Pacers',
-            LAC: 'LA Clippers', LAL: 'Los Angeles Lakers', MEM: 'Memphis Grizzlies',
-            MIA: 'Miami Heat', MIL: 'Milwaukee Bucks', MIN: 'Minnesota Timberwolves',
-            NOP: 'New Orleans Pelicans', NYK: 'New York Knicks', OKC: 'Oklahoma City Thunder',
-            ORL: 'Orlando Magic', PHI: 'Philadelphia 76ers', PHX: 'Phoenix Suns',
-            POR: 'Portland Trail Blazers', SAC: 'Sacramento Kings', SAS: 'San Antonio Spurs',
-            TOR: 'Toronto Raptors', UTA: 'Utah Jazz', WAS: 'Washington Wizards'
-        };
+        // Real checklist from Beckett - parsed using our Beckett parser
+        const checklist = `Base Set
+300 cards
+1 Jayson Tatum, Boston Celtics
+2 Jaylen Brown, Boston Celtics
+3 Kristaps Porzingis, Boston Celtics
+4 Payton Pritchard, Boston Celtics
+5 Baylor Scheierman, Boston Celtics
+6 Derrick White, Boston Celtics
+7 Jrue Holiday, Boston Celtics
+8 D'Angelo Russell, Brooklyn Nets
+9 Ziaire Williams, Brooklyn Nets
+10 Nic Claxton, Brooklyn Nets
+11 Cam Thomas, Brooklyn Nets
+12 Jalen Wilson, Brooklyn Nets
+13 Cameron Johnson, Brooklyn Nets
+14 Jalen Brunson, New York Knicks
+15 OG Anunoby, New York Knicks
+16 Josh Hart, New York Knicks
+17 Miles McBride, New York Knicks
+18 Mikal Bridges, New York Knicks
+19 Karl-Anthony Towns, New York Knicks
+20 Tyler Kolek, New York Knicks
+21 Tyrese Maxey, Philadelphia 76ers
+22 Joel Embiid, Philadelphia 76ers
+23 Paul George, Philadelphia 76ers
+24 Jared McCain, Philadelphia 76ers
+25 Quentin Grimes, Philadelphia 76ers
+26 Guerschon Yabusele, Philadelphia 76ers
+27 Kelly Oubre Jr., Philadelphia 76ers
+28 Gradey Dick, Toronto Raptors
+29 Jonathan Mogbo, Toronto Raptors
+30 Brandon Ingram, Toronto Raptors
+31 Scottie Barnes, Toronto Raptors
+32 Immanuel Quickley, Toronto Raptors
+33 RJ Barrett, Toronto Raptors
+34 Coby White, Chicago Bulls
+35 Josh Giddey, Chicago Bulls
+36 Nikola Vucevic, Chicago Bulls
+37 Matas Buzelis, Chicago Bulls
+38 Patrick Williams, Chicago Bulls
+39 Lonzo Ball, Chicago Bulls
+40 Cade Cunningham, Detroit Pistons
+41 Jalen Duren, Detroit Pistons
+42 Ron Holland II, Detroit Pistons
+43 Malik Beasley, Detroit Pistons
+44 Ausar Thompson, Detroit Pistons
+45 Jaden Ivey, Detroit Pistons
+46 Marcus Sasser, Detroit Pistons
+47 Tyrese Haliburton, Indiana Pacers
+48 Bennedict Mathurin, Indiana Pacers
+49 Myles Turner, Indiana Pacers
+50 Jarace Walker, Indiana Pacers
+51 Obi Toppin, Indiana Pacers
+52 Andrew Nembhard, Indiana Pacers
+53 Pascal Siakam, Indiana Pacers
+54 Giannis Antetokounmpo, Milwaukee Bucks
+55 Damian Lillard, Milwaukee Bucks
+56 Kyle Kuzma, Milwaukee Bucks
+57 AJ Green, Milwaukee Bucks
+58 Brook Lopez, Milwaukee Bucks
+59 Gary Trent Jr., Milwaukee Bucks
+60 Tyler Smith, Milwaukee Bucks
+61 Trae Young, Atlanta Hawks
+62 Zaccharie Risacher, Atlanta Hawks
+63 Clint Capela, Atlanta Hawks
+64 Dyson Daniels, Atlanta Hawks
+65 Jalen Johnson, Atlanta Hawks
+66 Onyeka Okongwu, Atlanta Hawks
+67 LaMelo Ball, Charlotte Hornets
+68 Brandon Miller, Charlotte Hornets
+69 Miles Bridges, Charlotte Hornets
+70 Mark Williams, Charlotte Hornets
+71 Tidjane Salaun, Charlotte Hornets
+72 Nick Smith Jr., Charlotte Hornets
+73 Tyler Herro, Miami Heat
+74 Kel'el Ware, Miami Heat
+75 Bam Adebayo, Miami Heat
+76 Nikola Jovic, Miami Heat
+77 Andrew Wiggins, Miami Heat
+78 Jaime Jaquez Jr., Miami Heat
+79 Pelle Larsson, Miami Heat
+80 Donovan Mitchell, Cleveland Cavaliers
+81 Darius Garland, Cleveland Cavaliers
+82 Evan Mobley, Cleveland Cavaliers
+83 Ty Jerome, Cleveland Cavaliers
+84 Max Strus, Cleveland Cavaliers
+85 Jarrett Allen, Cleveland Cavaliers
+86 Jaylon Tyson, Cleveland Cavaliers
+87 Paolo Banchero, Orlando Magic
+88 Franz Wagner, Orlando Magic
+89 Anthony Black, Orlando Magic
+90 Wendell Carter Jr., Orlando Magic
+91 Cole Anthony, Orlando Magic
+92 Jalen Suggs, Orlando Magic
+93 Tristan da Silva, Orlando Magic
+94 Jordan Poole, Washington Wizards
+95 Bilal Coulibaly, Washington Wizards
+96 Alex Sarr, Washington Wizards
+97 Bub Carrington, Washington Wizards
+98 Kyshawn George, Washington Wizards
+99 AJ Johnson, Washington Wizards
+100 Khris Middleton, Washington Wizards
+101 Nikola Jokic, Denver Nuggets
+102 Christian Braun, Denver Nuggets
+103 Jamal Murray, Denver Nuggets
+104 Russell Westbrook, Denver Nuggets
+105 Michael Porter Jr., Denver Nuggets
+106 Peyton Watson, Denver Nuggets
+107 Jalen Pickett, Denver Nuggets
+108 Anthony Edwards, Minnesota Timberwolves
+109 Naz Reid, Minnesota Timberwolves
+110 Julius Randle, Minnesota Timberwolves
+111 Rudy Gobert, Minnesota Timberwolves
+112 Mike Conley, Minnesota Timberwolves
+113 Terrence Shannon Jr., Minnesota Timberwolves
+114 Rob Dillingham, Minnesota Timberwolves
+115 Shai Gilgeous-Alexander, Oklahoma City Thunder
+116 Jalen Williams, Oklahoma City Thunder
+117 Luguentz Dort, Oklahoma City Thunder
+118 Chet Holmgren, Oklahoma City Thunder
+119 Cason Wallace, Oklahoma City Thunder
+120 Isaiah Hartenstein, Oklahoma City Thunder
+121 Isaiah Joe, Oklahoma City Thunder
+122 Scoot Henderson, Portland Trail Blazers
+123 Anfernee Simons, Portland Trail Blazers
+124 Deandre Ayton, Portland Trail Blazers
+125 Deni Avdija, Portland Trail Blazers
+126 Donovan Clingan, Portland Trail Blazers
+127 Shaedon Sharpe, Portland Trail Blazers
+128 Toumani Camara, Portland Trail Blazers
+129 Lauri Markkanen, Utah Jazz
+130 Cody Williams, Utah Jazz
+131 Keyonte George, Utah Jazz
+132 Jordan Clarkson, Utah Jazz
+133 Isaiah Collier, Utah Jazz
+134 Kyle Filipowski, Utah Jazz
+135 Stephen Curry, Golden State Warriors
+136 Jimmy Butler III, Golden State Warriors
+137 Draymond Green, Golden State Warriors
+138 Jonathan Kuminga, Golden State Warriors
+139 Quinten Post, Golden State Warriors
+140 Moses Moody, Golden State Warriors
+141 Brandin Podziemski, Golden State Warriors
+142 Kawhi Leonard, Los Angeles Clippers
+143 James Harden, Los Angeles Clippers
+144 Norman Powell, Los Angeles Clippers
+145 Ivica Zubac, Los Angeles Clippers
+146 Nicolas Batum, Los Angeles Clippers
+147 Ben Simmons, Los Angeles Clippers
+148 Derrick Jones Jr., Los Angeles Clippers
+149 Dorian Finney-Smith, Los Angeles Lakers
+150 LeBron James, Los Angeles Lakers
+151 Austin Reaves, Los Angeles Lakers
+152 Bronny James Jr., Los Angeles Lakers
+153 Dalton Knecht, Los Angeles Lakers
+154 Rui Hachimura, Los Angeles Lakers
+155 Jarred Vanderbilt, Los Angeles Lakers
+156 Devin Booker, Phoenix Suns
+157 Kevin Durant, Houston Rockets
+158 Bradley Beal, Phoenix Suns
+159 Ryan Dunn, Phoenix Suns
+160 Oso Ighodaro, Phoenix Suns
+161 Grayson Allen, Phoenix Suns
+162 DeMar DeRozan, Sacramento Kings
+163 Zach LaVine, Sacramento Kings
+164 Malik Monk, Sacramento Kings
+165 Devin Carter, Sacramento Kings
+166 Keegan Murray, Sacramento Kings
+167 Domantas Sabonis, Sacramento Kings
+168 Kyrie Irving, Dallas Mavericks
+169 Anthony Davis, Dallas Mavericks
+170 Klay Thompson, Dallas Mavericks
+171 Brandon Williams, Dallas Mavericks
+172 Dereck Lively II, Dallas Mavericks
+173 P.J. Washington Jr., Dallas Mavericks
+174 Max Christie, Dallas Mavericks
+175 Jalen Green, Houston Rockets
+176 Amen Thompson, Houston Rockets
+177 Jabari Smith Jr., Houston Rockets
+178 Reed Sheppard, Houston Rockets
+179 Tari Eason, Houston Rockets
+180 Alperen Sengun, Houston Rockets
+181 Dillon Brooks, Houston Rockets
+182 Ja Morant, Memphis Grizzlies
+183 Jaylen Wells, Memphis Grizzlies
+184 Jaren Jackson Jr., Memphis Grizzlies
+185 Desmond Bane, Memphis Grizzlies
+186 Zach Edey, Memphis Grizzlies
+187 Santi Aldama, Memphis Grizzlies
+188 Yuki Kawamura, Memphis Grizzlies
+189 Herbert Jones, New Orleans Pelicans
+190 Trey Murphy III, New Orleans Pelicans
+191 Yves Missi, New Orleans Pelicans
+192 Dejounte Murray, New Orleans Pelicans
+193 CJ McCollum, New Orleans Pelicans
+194 Jordan Hawkins, New Orleans Pelicans
+195 Victor Wembanyama, San Antonio Spurs
+196 De'Aaron Fox, San Antonio Spurs
+197 Stephon Castle, San Antonio Spurs
+198 Chris Paul, San Antonio Spurs
+199 Jeremy Sochan, San Antonio Spurs
+200 Keldon Johnson, San Antonio Spurs
+201 Cooper Flagg, Dallas Mavericks
+202 Dylan Harper, San Antonio Spurs
+203 VJ Edgecombe, Philadelphia 76ers
+204 Kon Knueppel, Charlotte Hornets
+205 Ace Bailey, Utah Jazz
+206 Tre Johnson III, Washington Wizards
+207 Jeremiah Fears, New Orleans Pelicans
+208 Egor Demin, Brooklyn Nets
+209 Collin Murray-Boyles, Toronto Raptors
+210 Khaman Maluach, Phoenix Suns
+211 Cedric Coward, Memphis Grizzlies
+212 Noa Essengue, Chicago Bulls
+213 Derik Queen, New Orleans Pelicans
+214 Carter Bryant, San Antonio Spurs
+215 Thomas Sorber, Oklahoma City Thunder
+216 Yang Hansen, Portland Trail Blazers
+217 Joan Beringer, Minnesota Timberwolves
+218 Walter Clayton Jr., Utah Jazz
+219 Nolan Traore, Brooklyn Nets
+220 Kasparas Jakucionis, Miami Heat
+221 Will Riley, Washington Wizards
+222 Drake Powell, Brooklyn Nets
+223 Asa Newell, Atlanta Hawks
+224 Nique Clifford, Sacramento Kings
+225 Jase Richardson, Orlando Magic
+226 Ben Saraf, Brooklyn Nets
+227 Danny Wolf, Brooklyn Nets
+228 Hugo Gonzalez, Boston Celtics
+229 Liam McNeeley, Charlotte Hornets
+230 Yanic Konan-Niederhauser, Los Angeles Clippers
+231 Rasheer Fleming, Phoenix Suns
+232 Noah Penda, Orlando Magic
+233 Sion James, Charlotte Hornets
+234 Ryan Kalkbrenner, Charlotte Hornets
+235 Johni Broome, Philadelphia 76ers
+236 Adou Thiero, Los Angeles Lakers
+237 Buddy Hield, Golden State Warriors
+238 Chaz Lanier, Detroit Pistons
+239 Kam Jones, Indiana Pacers
+240 Alijah Martin, Toronto Raptors
+241 Micah Peavy, New Orleans Pelicans
+242 Koby Brea, Phoenix Suns
+243 Maxime Raynaud, Sacramento Kings
+244 Jamir Watkins, Washington Wizards
+245 Brooks Barnhizer, Oklahoma City Thunder
+246 Naji Marshall, Dallas Mavericks
+247 Ochai Agbaji, Toronto Raptors
+248 Jaden McDaniels, Minnesota Timberwolves
+249 GG Jackson II, Memphis Grizzlies
+250 Tyrese Proctor, Cleveland Cavaliers
+251 Bill Russell, Boston Celtics
+252 Dirk Nowitzki, Dallas Mavericks
+253 Allen Iverson, Philadelphia 76ers
+254 Kevin Garnett, Minnesota Timberwolves
+255 Magic Johnson, Los Angeles Lakers
+256 Carmelo Anthony, Denver Nuggets
+257 Larry Bird, Boston Celtics
+258 Rick Barry, Golden State Warriors
+259 Kareem Abdul-Jabbar, Milwaukee Bucks
+260 Shaquille O'Neal, Orlando Magic
+261 Dwyane Wade, Miami Heat
+262 Manu Ginobili, San Antonio Spurs
+263 Tracy McGrady, Houston Rockets
+264 John Stockton, Utah Jazz
+265 George Gervin, San Antonio Spurs
+266 Spud Webb, Atlanta Hawks
+267 Steve Kerr, San Antonio Spurs
+268 Bernard King, New York Knicks
+269 Isiah Thomas, Detroit Pistons
+270 Detlef Schrempf, Seattle Supersonics
+Combo Cards
+30 cards
+271 Paolo Banchero, Orlando Magic
+272 Jayson Tatum, Boston Celtics
+273 Cameron Johnson, Brooklyn Nets
+274 Jalen Brunson, New York Knicks
+275 Jared McCain, Philadelphia 76ers
+276 RJ Barrett, Toronto Raptors
+277 Josh Giddey, Chicago Bulls
+278 Donovan Mitchell, Cleveland Cavaliers
+279 Cade Cunningham, Detroit Pistons
+280 Tyrese Haliburton, Indiana Pacers
+281 Giannis Antetokounmpo, Milwaukee Bucks
+282 Trae Young, Atlanta Hawks
+283 Brandon Miller, Charlotte Hornets
+284 Tyler Herro, Miami Heat
+285 Alex Sarr, Washington Wizards
+286 Nikola Jokic, Denver Nuggets
+287 Anthony Edwards, Minnesota Timberwolves
+288 Shai Gilgeous-Alexander, Oklahoma City Thunder
+289 Shaedon Sharpe, Portland Trail Blazers
+290 Kyle Filipowski, Utah Jazz
+291 Stephen Curry, Golden State Warriors
+292 James Harden, Los Angeles Clippers
+293 Austin Reaves, Los Angeles Lakers
+294 Devin Booker, Phoenix Suns
+295 Zach Lavine, Sacramento Kings
+296 Anthony Davis, Dallas Mavericks
+297 Amen Thompson, Houston Rockets
+298 Ja Morant, Memphis Grizzlies
+299 Trey Murphy III, New Orleans Pelicans
+300 Victor Wembanyama, San Antonio Spurs
+Base \u2013 Player Number Variation
+25 cards
+1 Jayson Tatum, Boston Celtics
+14 Jalen Brunson, New York Knicks
+24 Jared McCain, Philadelphia 76ers
+40 Cade Cunningham, Detroit Pistons
+47 Tyrese Haliburton, Indiana Pacers
+54 Giannis Antetokounmpo, Milwaukee Bucks
+61 Trae Young, Atlanta Hawks
+67 LaMelo Ball, Charlotte Hornets
+73 Tyler Herro, Miami Heat
+80 Donovan Mitchell, Cleveland Cavaliers
+87 Paolo Banchero, Orlando Magic
+101 Nikola Jokic, Denver Nuggets
+108 Anthony Edwards, Minnesota Timberwolves
+115 Shai Gilgeous-Alexander, Oklahoma City Thunder
+116 Jalen Williams, Oklahoma City Thunder
+122 Scoot Henderson, Portland Trail Blazers
+135 Stephen Curry, Golden State Warriors
+142 Kawhi Leonard, Los Angeles Clippers
+150 LeBron James, Los Angeles Lakers
+156 Devin Booker, Phoenix Suns
+157 Kevin Durant, Houston Rockets
+168 Kyrie Irving, Dallas Mavericks
+176 Amen Thompson, Houston Rockets
+182 Ja Morant, Memphis Grizzlies
+195 Victor Wembanyama, San Antonio Spurs`;
 
-        // Base set: 300 cards - top players from each team
-        const basePlayers = [
-            // Atlanta Hawks
-            ['1', 'Trae Young', 'Atlanta Hawks'],
-            ['2', 'Dejounte Murray', 'Atlanta Hawks'],
-            ['3', 'Jalen Johnson', 'Atlanta Hawks'],
-            ['4', 'De\'Andre Hunter', 'Atlanta Hawks'],
-            ['5', 'Bogdan Bogdanovic', 'Atlanta Hawks'],
-            ['6', 'Onyeka Okongwu', 'Atlanta Hawks'],
-            ['7', 'Dyson Daniels', 'Atlanta Hawks'],
-            ['8', 'Zaccharie Risacher', 'Atlanta Hawks'],
-            // Boston Celtics
-            ['9', 'Jayson Tatum', 'Boston Celtics'],
-            ['10', 'Jaylen Brown', 'Boston Celtics'],
-            ['11', 'Derrick White', 'Boston Celtics'],
-            ['12', 'Kristaps Porzingis', 'Boston Celtics'],
-            ['13', 'Jrue Holiday', 'Boston Celtics'],
-            ['14', 'Al Horford', 'Boston Celtics'],
-            ['15', 'Payton Pritchard', 'Boston Celtics'],
-            ['16', 'Sam Hauser', 'Boston Celtics'],
-            // Brooklyn Nets
-            ['17', 'Mikal Bridges', 'Brooklyn Nets'],
-            ['18', 'Cameron Johnson', 'Brooklyn Nets'],
-            ['19', 'Nic Claxton', 'Brooklyn Nets'],
-            ['20', 'Ben Simmons', 'Brooklyn Nets'],
-            // Charlotte Hornets
-            ['21', 'LaMelo Ball', 'Charlotte Hornets'],
-            ['22', 'Brandon Miller', 'Charlotte Hornets'],
-            ['23', 'Mark Williams', 'Charlotte Hornets'],
-            ['24', 'Miles Bridges', 'Charlotte Hornets'],
-            ['25', 'Tre Mann', 'Charlotte Hornets'],
-            ['26', 'Tidjane Salaun', 'Charlotte Hornets'],
-            // Chicago Bulls
-            ['27', 'Zach LaVine', 'Chicago Bulls'],
-            ['28', 'Coby White', 'Chicago Bulls'],
-            ['29', 'Patrick Williams', 'Chicago Bulls'],
-            ['30', 'Nikola Vucevic', 'Chicago Bulls'],
-            ['31', 'Josh Giddey', 'Chicago Bulls'],
-            ['32', 'Matas Buzelis', 'Chicago Bulls'],
-            // Cleveland Cavaliers
-            ['33', 'Donovan Mitchell', 'Cleveland Cavaliers'],
-            ['34', 'Darius Garland', 'Cleveland Cavaliers'],
-            ['35', 'Evan Mobley', 'Cleveland Cavaliers'],
-            ['36', 'Jarrett Allen', 'Cleveland Cavaliers'],
-            ['37', 'Caris LeVert', 'Cleveland Cavaliers'],
-            ['38', 'Max Strus', 'Cleveland Cavaliers'],
-            // Dallas Mavericks
-            ['39', 'Luka Doncic', 'Dallas Mavericks'],
-            ['40', 'Kyrie Irving', 'Dallas Mavericks'],
-            ['41', 'Daniel Gafford', 'Dallas Mavericks'],
-            ['42', 'P.J. Washington', 'Dallas Mavericks'],
-            ['43', 'Dereck Lively II', 'Dallas Mavericks'],
-            ['44', 'Klay Thompson', 'Dallas Mavericks'],
-            // Denver Nuggets
-            ['45', 'Nikola Jokic', 'Denver Nuggets'],
-            ['46', 'Jamal Murray', 'Denver Nuggets'],
-            ['47', 'Aaron Gordon', 'Denver Nuggets'],
-            ['48', 'Michael Porter Jr.', 'Denver Nuggets'],
-            ['49', 'Kentavious Caldwell-Pope', 'Denver Nuggets'],
-            ['50', 'Christian Braun', 'Denver Nuggets'],
-            // Detroit Pistons
-            ['51', 'Cade Cunningham', 'Detroit Pistons'],
-            ['52', 'Jaden Ivey', 'Detroit Pistons'],
-            ['53', 'Ausar Thompson', 'Detroit Pistons'],
-            ['54', 'Jalen Duren', 'Detroit Pistons'],
-            ['55', 'Ron Holland II', 'Detroit Pistons'],
-            // Golden State Warriors
-            ['56', 'Stephen Curry', 'Golden State Warriors'],
-            ['57', 'Andrew Wiggins', 'Golden State Warriors'],
-            ['58', 'Draymond Green', 'Golden State Warriors'],
-            ['59', 'Jonathan Kuminga', 'Golden State Warriors'],
-            ['60', 'Brandin Podziemski', 'Golden State Warriors'],
-            ['61', 'Buddy Hield', 'Golden State Warriors'],
-            // Houston Rockets
-            ['62', 'Jalen Green', 'Houston Rockets'],
-            ['63', 'Alperen Sengun', 'Houston Rockets'],
-            ['64', 'Jabari Smith Jr.', 'Houston Rockets'],
-            ['65', 'Fred VanVleet', 'Houston Rockets'],
-            ['66', 'Amen Thompson', 'Houston Rockets'],
-            ['67', 'Dillon Brooks', 'Houston Rockets'],
-            ['68', 'Reed Sheppard', 'Houston Rockets'],
-            // Indiana Pacers
-            ['69', 'Tyrese Haliburton', 'Indiana Pacers'],
-            ['70', 'Pascal Siakam', 'Indiana Pacers'],
-            ['71', 'Myles Turner', 'Indiana Pacers'],
-            ['72', 'Bennedict Mathurin', 'Indiana Pacers'],
-            ['73', 'Andrew Nembhard', 'Indiana Pacers'],
-            ['74', 'Aaron Nesmith', 'Indiana Pacers'],
-            // LA Clippers
-            ['75', 'James Harden', 'LA Clippers'],
-            ['76', 'Kawhi Leonard', 'LA Clippers'],
-            ['77', 'Norman Powell', 'LA Clippers'],
-            ['78', 'Ivica Zubac', 'LA Clippers'],
-            // Los Angeles Lakers
-            ['79', 'LeBron James', 'Los Angeles Lakers'],
-            ['80', 'Anthony Davis', 'Los Angeles Lakers'],
-            ['81', 'Austin Reaves', 'Los Angeles Lakers'],
-            ['82', 'D\'Angelo Russell', 'Los Angeles Lakers'],
-            ['83', 'Rui Hachimura', 'Los Angeles Lakers'],
-            ['84', 'Dalton Knecht', 'Los Angeles Lakers'],
-            ['85', 'Bronny James', 'Los Angeles Lakers'],
-            // Memphis Grizzlies
-            ['86', 'Ja Morant', 'Memphis Grizzlies'],
-            ['87', 'Desmond Bane', 'Memphis Grizzlies'],
-            ['88', 'Jaren Jackson Jr.', 'Memphis Grizzlies'],
-            ['89', 'Marcus Smart', 'Memphis Grizzlies'],
-            ['90', 'Zach Edey', 'Memphis Grizzlies'],
-            // Miami Heat
-            ['91', 'Jimmy Butler', 'Miami Heat'],
-            ['92', 'Bam Adebayo', 'Miami Heat'],
-            ['93', 'Tyler Herro', 'Miami Heat'],
-            ['94', 'Terry Rozier', 'Miami Heat'],
-            ['95', 'Jaime Jaquez Jr.', 'Miami Heat'],
-            // Milwaukee Bucks
-            ['96', 'Giannis Antetokounmpo', 'Milwaukee Bucks'],
-            ['97', 'Damian Lillard', 'Milwaukee Bucks'],
-            ['98', 'Khris Middleton', 'Milwaukee Bucks'],
-            ['99', 'Brook Lopez', 'Milwaukee Bucks'],
-            ['100', 'Bobby Portis', 'Milwaukee Bucks'],
-            // Minnesota Timberwolves
-            ['101', 'Anthony Edwards', 'Minnesota Timberwolves'],
-            ['102', 'Karl-Anthony Towns', 'Minnesota Timberwolves'],
-            ['103', 'Rudy Gobert', 'Minnesota Timberwolves'],
-            ['104', 'Jaden McDaniels', 'Minnesota Timberwolves'],
-            ['105', 'Mike Conley', 'Minnesota Timberwolves'],
-            ['106', 'Naz Reid', 'Minnesota Timberwolves'],
-            // New Orleans Pelicans
-            ['107', 'Zion Williamson', 'New Orleans Pelicans'],
-            ['108', 'Brandon Ingram', 'New Orleans Pelicans'],
-            ['109', 'CJ McCollum', 'New Orleans Pelicans'],
-            ['110', 'Herb Jones', 'New Orleans Pelicans'],
-            ['111', 'Trey Murphy III', 'New Orleans Pelicans'],
-            // New York Knicks
-            ['112', 'Jalen Brunson', 'New York Knicks'],
-            ['113', 'Julius Randle', 'New York Knicks'],
-            ['114', 'OG Anunoby', 'New York Knicks'],
-            ['115', 'Josh Hart', 'New York Knicks'],
-            ['116', 'Donte DiVincenzo', 'New York Knicks'],
-            ['117', 'Mitchell Robinson', 'New York Knicks'],
-            // Oklahoma City Thunder
-            ['118', 'Shai Gilgeous-Alexander', 'Oklahoma City Thunder'],
-            ['119', 'Chet Holmgren', 'Oklahoma City Thunder'],
-            ['120', 'Jalen Williams', 'Oklahoma City Thunder'],
-            ['121', 'Luguentz Dort', 'Oklahoma City Thunder'],
-            ['122', 'Isaiah Hartenstein', 'Oklahoma City Thunder'],
-            ['123', 'Alex Caruso', 'Oklahoma City Thunder'],
-            ['124', 'Nikola Topic', 'Oklahoma City Thunder'],
-            // Orlando Magic
-            ['125', 'Paolo Banchero', 'Orlando Magic'],
-            ['126', 'Franz Wagner', 'Orlando Magic'],
-            ['127', 'Jalen Suggs', 'Orlando Magic'],
-            ['128', 'Wendell Carter Jr.', 'Orlando Magic'],
-            ['129', 'Cole Anthony', 'Orlando Magic'],
-            // Philadelphia 76ers
-            ['130', 'Joel Embiid', 'Philadelphia 76ers'],
-            ['131', 'Tyrese Maxey', 'Philadelphia 76ers'],
-            ['132', 'Paul George', 'Philadelphia 76ers'],
-            ['133', 'Kelly Oubre Jr.', 'Philadelphia 76ers'],
-            ['134', 'Caleb Martin', 'Philadelphia 76ers'],
-            // Phoenix Suns
-            ['135', 'Kevin Durant', 'Phoenix Suns'],
-            ['136', 'Devin Booker', 'Phoenix Suns'],
-            ['137', 'Bradley Beal', 'Phoenix Suns'],
-            ['138', 'Jusuf Nurkic', 'Phoenix Suns'],
-            ['139', 'Grayson Allen', 'Phoenix Suns'],
-            // Portland Trail Blazers
-            ['140', 'Anfernee Simons', 'Portland Trail Blazers'],
-            ['141', 'Scoot Henderson', 'Portland Trail Blazers'],
-            ['142', 'Jerami Grant', 'Portland Trail Blazers'],
-            ['143', 'Deandre Ayton', 'Portland Trail Blazers'],
-            ['144', 'Shaedon Sharpe', 'Portland Trail Blazers'],
-            ['145', 'Donovan Clingan', 'Portland Trail Blazers'],
-            // Sacramento Kings
-            ['146', 'De\'Aaron Fox', 'Sacramento Kings'],
-            ['147', 'Domantas Sabonis', 'Sacramento Kings'],
-            ['148', 'DeMar DeRozan', 'Sacramento Kings'],
-            ['149', 'Keegan Murray', 'Sacramento Kings'],
-            ['150', 'Malik Monk', 'Sacramento Kings'],
-            // San Antonio Spurs
-            ['151', 'Victor Wembanyama', 'San Antonio Spurs'],
-            ['152', 'Devin Vassell', 'San Antonio Spurs'],
-            ['153', 'Keldon Johnson', 'San Antonio Spurs'],
-            ['154', 'Jeremy Sochan', 'San Antonio Spurs'],
-            ['155', 'Tre Jones', 'San Antonio Spurs'],
-            ['156', 'Stephon Castle', 'San Antonio Spurs'],
-            // Toronto Raptors
-            ['157', 'Scottie Barnes', 'Toronto Raptors'],
-            ['158', 'RJ Barrett', 'Toronto Raptors'],
-            ['159', 'Immanuel Quickley', 'Toronto Raptors'],
-            ['160', 'Jakob Poeltl', 'Toronto Raptors'],
-            ['161', 'Gradey Dick', 'Toronto Raptors'],
-            // Utah Jazz
-            ['162', 'Lauri Markkanen', 'Utah Jazz'],
-            ['163', 'Collin Sexton', 'Utah Jazz'],
-            ['164', 'Jordan Clarkson', 'Utah Jazz'],
-            ['165', 'John Collins', 'Utah Jazz'],
-            ['166', 'Walker Kessler', 'Utah Jazz'],
-            ['167', 'Keyonte George', 'Utah Jazz'],
-            // Washington Wizards
-            ['168', 'Kyle Kuzma', 'Washington Wizards'],
-            ['169', 'Jordan Poole', 'Washington Wizards'],
-            ['170', 'Deni Avdija', 'Washington Wizards'],
-            ['171', 'Bilal Coulibaly', 'Washington Wizards'],
-            ['172', 'Alex Sarr', 'Washington Wizards'],
-            // Legends / SP Base
-            ['173', 'Michael Jordan', 'Chicago Bulls'],
-            ['174', 'Kobe Bryant', 'Los Angeles Lakers'],
-            ['175', 'Magic Johnson', 'Los Angeles Lakers'],
-            ['176', 'Larry Bird', 'Boston Celtics'],
-            ['177', 'Tim Duncan', 'San Antonio Spurs'],
-            ['178', 'Shaquille O\'Neal', 'Los Angeles Lakers'],
-            ['179', 'Hakeem Olajuwon', 'Houston Rockets'],
-            ['180', 'Allen Iverson', 'Philadelphia 76ers'],
-            ['181', 'Dirk Nowitzki', 'Dallas Mavericks'],
-            ['182', 'Kevin Garnett', 'Minnesota Timberwolves'],
-            ['183', 'Charles Barkley', 'Phoenix Suns'],
-            ['184', 'Patrick Ewing', 'New York Knicks'],
-            ['185', 'Scottie Pippen', 'Chicago Bulls'],
-            ['186', 'John Stockton', 'Utah Jazz'],
-            ['187', 'Karl Malone', 'Utah Jazz'],
-            ['188', 'David Robinson', 'San Antonio Spurs'],
-            ['189', 'Isiah Thomas', 'Detroit Pistons'],
-            ['190', 'Dwyane Wade', 'Miami Heat'],
-            // More current players to round out
-            ['191', 'Devin Booker', 'Phoenix Suns'],
-            ['192', 'Trae Young', 'Atlanta Hawks'],
-            ['193', 'Ja Morant', 'Memphis Grizzlies'],
-            ['194', 'Zion Williamson', 'New Orleans Pelicans'],
-            ['195', 'LaMelo Ball', 'Charlotte Hornets'],
-            ['196', 'Cade Cunningham', 'Detroit Pistons'],
-            ['197', 'Evan Mobley', 'Cleveland Cavaliers'],
-            ['198', 'Scottie Barnes', 'Toronto Raptors'],
-            ['199', 'Paolo Banchero', 'Orlando Magic'],
-            ['200', 'Victor Wembanyama', 'San Antonio Spurs']
-        ];
-
-        // Insert sets
-        const inserts = [
-            // 1985 Topps Basketball Tribute
-            ['T-1', 'LeBron James', 'Los Angeles Lakers', '1985 Topps Tribute'],
-            ['T-2', 'Stephen Curry', 'Golden State Warriors', '1985 Topps Tribute'],
-            ['T-3', 'Kevin Durant', 'Phoenix Suns', '1985 Topps Tribute'],
-            ['T-4', 'Giannis Antetokounmpo', 'Milwaukee Bucks', '1985 Topps Tribute'],
-            ['T-5', 'Nikola Jokic', 'Denver Nuggets', '1985 Topps Tribute'],
-            ['T-6', 'Luka Doncic', 'Dallas Mavericks', '1985 Topps Tribute'],
-            ['T-7', 'Jayson Tatum', 'Boston Celtics', '1985 Topps Tribute'],
-            ['T-8', 'Anthony Edwards', 'Minnesota Timberwolves', '1985 Topps Tribute'],
-            ['T-9', 'Shai Gilgeous-Alexander', 'Oklahoma City Thunder', '1985 Topps Tribute'],
-            ['T-10', 'Victor Wembanyama', 'San Antonio Spurs', '1985 Topps Tribute'],
-            ['T-11', 'Joel Embiid', 'Philadelphia 76ers', '1985 Topps Tribute'],
-            ['T-12', 'Donovan Mitchell', 'Cleveland Cavaliers', '1985 Topps Tribute'],
-            ['T-13', 'Damian Lillard', 'Milwaukee Bucks', '1985 Topps Tribute'],
-            ['T-14', 'Ja Morant', 'Memphis Grizzlies', '1985 Topps Tribute'],
-            ['T-15', 'Chet Holmgren', 'Oklahoma City Thunder', '1985 Topps Tribute'],
-            // Topps Now
-            ['TN-1', 'Jayson Tatum', 'Boston Celtics', 'Topps Now'],
-            ['TN-2', 'Shai Gilgeous-Alexander', 'Oklahoma City Thunder', 'Topps Now'],
-            ['TN-3', 'Anthony Edwards', 'Minnesota Timberwolves', 'Topps Now'],
-            ['TN-4', 'Luka Doncic', 'Dallas Mavericks', 'Topps Now'],
-            ['TN-5', 'Victor Wembanyama', 'San Antonio Spurs', 'Topps Now'],
-            ['TN-6', 'Nikola Jokic', 'Denver Nuggets', 'Topps Now'],
-            ['TN-7', 'LeBron James', 'Los Angeles Lakers', 'Topps Now'],
-            ['TN-8', 'Stephen Curry', 'Golden State Warriors', 'Topps Now'],
-            ['TN-9', 'Giannis Antetokounmpo', 'Milwaukee Bucks', 'Topps Now'],
-            ['TN-10', 'Cade Cunningham', 'Detroit Pistons', 'Topps Now'],
-            // First Topps
-            ['FT-1', 'Zaccharie Risacher', 'Atlanta Hawks', 'First Topps'],
-            ['FT-2', 'Alex Sarr', 'Washington Wizards', 'First Topps'],
-            ['FT-3', 'Reed Sheppard', 'Houston Rockets', 'First Topps'],
-            ['FT-4', 'Stephon Castle', 'San Antonio Spurs', 'First Topps'],
-            ['FT-5', 'Ron Holland II', 'Detroit Pistons', 'First Topps'],
-            ['FT-6', 'Donovan Clingan', 'Portland Trail Blazers', 'First Topps'],
-            ['FT-7', 'Tidjane Salaun', 'Charlotte Hornets', 'First Topps'],
-            ['FT-8', 'Dalton Knecht', 'Los Angeles Lakers', 'First Topps'],
-            ['FT-9', 'Matas Buzelis', 'Chicago Bulls', 'First Topps'],
-            ['FT-10', 'Nikola Topic', 'Oklahoma City Thunder', 'First Topps'],
-            ['FT-11', 'Zach Edey', 'Memphis Grizzlies', 'First Topps'],
-            ['FT-12', 'Bronny James', 'Los Angeles Lakers', 'First Topps'],
-            ['FT-13', 'Rob Dillingham', 'Minnesota Timberwolves', 'First Topps'],
-            ['FT-14', 'Cody Williams', 'Utah Jazz', 'First Topps'],
-            ['FT-15', 'Ja\'Kobe Walter', 'Toronto Raptors', 'First Topps'],
-            // All-Star Showcase
-            ['AS-1', 'LeBron James', 'Los Angeles Lakers', 'All-Star Showcase'],
-            ['AS-2', 'Stephen Curry', 'Golden State Warriors', 'All-Star Showcase'],
-            ['AS-3', 'Giannis Antetokounmpo', 'Milwaukee Bucks', 'All-Star Showcase'],
-            ['AS-4', 'Kevin Durant', 'Phoenix Suns', 'All-Star Showcase'],
-            ['AS-5', 'Nikola Jokic', 'Denver Nuggets', 'All-Star Showcase'],
-            ['AS-6', 'Jayson Tatum', 'Boston Celtics', 'All-Star Showcase'],
-            ['AS-7', 'Shai Gilgeous-Alexander', 'Oklahoma City Thunder', 'All-Star Showcase'],
-            ['AS-8', 'Anthony Edwards', 'Minnesota Timberwolves', 'All-Star Showcase'],
-            ['AS-9', 'Luka Doncic', 'Dallas Mavericks', 'All-Star Showcase'],
-            ['AS-10', 'Donovan Mitchell', 'Cleveland Cavaliers', 'All-Star Showcase'],
-        ];
-
-        const cards = [];
-
-        basePlayers.forEach(([num, player, team]) => {
-            cards.push({
-                id: generateId(),
-                number: num,
-                player,
-                team,
-                subset: 'Base',
-                owned: false
-            });
-        });
-
-        inserts.forEach(([num, player, team, subset]) => {
-            cards.push({
-                id: generateId(),
-                number: num,
-                player,
-                team,
-                subset,
-                owned: false
-            });
-        });
+        const cards = parseBeckettChecklist(checklist);
 
         appData.sets.push({
             id: generateId(),

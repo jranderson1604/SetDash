@@ -10,7 +10,16 @@
     function loadData() {
         try {
             const raw = localStorage.getItem(STORAGE_KEY);
-            return raw ? JSON.parse(raw) : { sets: [] };
+            const data = raw ? JSON.parse(raw) : { sets: [] };
+            // Migrate: ensure all cards have the picked_up field
+            (data.sets || []).forEach(set => {
+                (set.cards || []).forEach(card => {
+                    if (typeof card.picked_up === 'undefined') {
+                        card.picked_up = false;
+                    }
+                });
+            });
+            return data;
         } catch {
             return { sets: [] };
         }
@@ -149,7 +158,8 @@
                 player: m.player,
                 team: m.team,
                 subset: currentSubset,
-                owned: false
+                owned: false,
+                picked_up: false
             });
         }
 
@@ -238,7 +248,8 @@
                 player: getField(fields, colMap.player) || '',
                 team: getField(fields, colMap.team) || '',
                 subset: getField(fields, colMap.subset) || 'Base',
-                owned: false
+                owned: false,
+                picked_up: false
             };
 
             // Clean up card number - remove leading # or "No."
@@ -565,6 +576,9 @@
                 <td class="col-owned">
                     <input type="checkbox" class="card-owned-toggle" data-card-id="${card.id}" ${card.owned ? 'checked' : ''}>
                 </td>
+                <td class="col-picked-up">
+                    <input type="checkbox" class="card-picked-up-toggle" data-card-id="${card.id}" ${card.picked_up ? 'checked' : ''}>
+                </td>
             </tr>
         `).join('');
 
@@ -578,6 +592,19 @@
                     saveData(appData);
                     renderDetailTable();
                     renderSetsGrid();
+                }
+            });
+        });
+
+        // Picked up toggle handlers
+        tbody.querySelectorAll('.card-picked-up-toggle').forEach(cb => {
+            cb.addEventListener('change', () => {
+                const cardId = cb.dataset.cardId;
+                const card = set.cards.find(c => c.id === cardId);
+                if (card) {
+                    card.picked_up = cb.checked;
+                    saveData(appData);
+                    renderDetailTable();
                 }
             });
         });
@@ -716,10 +743,11 @@
             if (!card) {
                 return '<div class="binder-slot empty-slot"></div>';
             }
-            const cls = card.owned ? 'owned' : 'needed';
+            const cls = card.owned ? 'owned' : card.picked_up ? 'picked-up' : 'needed';
             return `
                 <div class="binder-slot ${cls}" data-card-id="${card.id}" title="Click to toggle owned">
                     ${card.owned ? '<div class="owned-check">&#10003;</div>' : ''}
+                    ${card.picked_up && !card.owned ? '<div class="picked-up-badge">Picked Up</div>' : ''}
                     <div class="slot-number">#${escHtml(card.number)}</div>
                     <div class="slot-player">${escHtml(card.player)}</div>
                     <div class="slot-team">${escHtml(card.team)}</div>
@@ -928,7 +956,8 @@
                     player,
                     team,
                     subset: subset || 'Base',
-                    owned: false
+                    owned: false,
+                    picked_up: false
                 });
                 added++;
             }
